@@ -1,74 +1,53 @@
 services:
-  kafka:
-    image: apache/kafka:3.7.0
-    hostname: kafka
-    container_name: kafka
+  kafka-1:
+    image: apache/kafka
+    hostname: kafka-1
+    container_name: kafka-kraft-1
     ports:
-      - "9092:9092"
-      - "9093:9093"
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-      - ./server.properties:/opt/kafka/config/kraft/server.properties:ro
-    entrypoint: ['/bin/sh', '-c']
-    command: |
-      "
-      # Format storage if not already formatted
-      if [ ! -f /var/lib/kafka/data/meta.properties ]; then
-        echo 'Formatting Kafka storage for KRaft mode...'
-        /opt/kafka/bin/kafka-storage.sh format --config /opt/kafka/config/kraft/server.properties --cluster-id MkU3OEVBNTcwNTJENDM2Qk --ignore-formatted
-      fi
-      
-      # Start Kafka
-      exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
-      "
+      - "19092:9092"
+    environment:
+      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
     networks:
-      - kafka-network
+      - kafka-net
     healthcheck:
-      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1",
+        ]
       interval: 10s
-      timeout: 5s
-      retries: 10
+      timeout: 10s
+      retries: 5
+    volumes:
+      - kafka-data-1:/var/lib/kafka/data
+      - ./server-kraft.properties:/opt/kafka/config/kraft/server.properties:ro
+    command: >
+      bash -c "
+        if [ ! -f /var/lib/kafka/data/meta.properties ]; then
+          echo 'Formatting Kafka storage for KRaft mode with cluster ID: $${KAFKA_CLUSTER_ID}'
+          /opt/kafka/bin/kafka-storage.sh format -t $${KAFKA_CLUSTER_ID} -c /opt/kafka/config/kraft/server.properties --ignore-formatted
+        fi
+        echo 'Starting Kafka server for kraft-cluster...'
+        exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
+      "
 
-  kafka-init:
-    image: apache/kafka:3.7.0
-    hostname: kafka-init
-    container_name: kafka-init
+  kafka-ui:
+    image: provectuslabs/kafka-ui
+    ports:
+      - "8080:8080"
+    restart: always
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "kraft-cluster"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:9094
     depends_on:
-      kafka:
-        condition: service_healthy
-    entrypoint: ['/bin/sh', '-c']
-    command: |
-      "
-      # Wait for Kafka to be ready
-      echo 'Waiting for Kafka to be ready...'
-      until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 2>/dev/null; do
-        echo 'Waiting for Kafka broker...'
-        sleep 2
-      done
-      
-      # Create sample topic
-      echo 'Creating sample topic: sample-topic'
-      /opt/kafka/bin/kafka-topics.sh --create \
-        --bootstrap-server kafka:29092 \
-        --replication-factor 1 \
-        --partitions 3 \
-        --topic sample-topic \
-        --if-not-exists
-      
-      # List topics to verify
-      echo 'Listing all topics:'
-      /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server kafka:29092
-      
-      echo 'Kafka KRaft setup complete!'
-      "
+      - kafka-1
     networks:
-      - kafka-network
-
-volumes:
-  kafka-data:
-    driver: local
+      - kafka-net
 
 networks:
-  kafka-network:
+  kafka-net: 
     driver: bridge
 
+volumes:
+  kafka-data-1:
+    driver: local
